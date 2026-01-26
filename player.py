@@ -20,7 +20,7 @@ class Player(arcade.Sprite):
         self.on_ground = True
 
         # Стрельба
-        self.bullet_list = None  # Будет установлено в main.py
+        self.bullet_list = None
         self.shoot_cooldown = 0.3
         self.shoot_timer = 0
         self.target = None, None
@@ -48,7 +48,7 @@ class Player(arcade.Sprite):
         self.wants_to_shoot = False
 
     def set_bullet_list(self, bullet_list):
-        """Устанавливает список пуль"""
+        #  Передача списка пуль из main
         self.bullet_list = bullet_list
 
     def on_key_press(self, key, modifiers):
@@ -85,13 +85,7 @@ class Player(arcade.Sprite):
     def update_animation(self, delta_time):
         walking = self.move_left or self.move_right
 
-        if not self.on_ground:
-            if self.face_direction == 0:
-                self.texture = self.jump_texture
-            else:
-                self.texture = self.jump_texture.flip_horizontally()
-
-        elif walking:
+        if walking:
             self.is_walking = True
             self.texture_change_time += delta_time
             if self.texture_change_time >= self.texture_change_delay:
@@ -111,11 +105,13 @@ class Player(arcade.Sprite):
             else:
                 self.texture = self.idle_texture.flip_horizontally()
 
-    def can_jump(self):
-        return self.jumps_available > 0
+    def on_land(self):  # Вызывается в main в момент приземления
+        self.jumps_available = 2
+        self.is_jumping = False
+        self.on_ground = True
 
     def jump(self):
-        if self.can_jump():
+        if self.jumps_available > 0:
             self.change_y = self.speed_y
             self.jumps_available -= 1
             self.is_jumping = True
@@ -144,7 +140,7 @@ class Player(arcade.Sprite):
             self.change_x = self.speed_x
 
         # Прыжок
-        if self.wants_to_jump and self.can_jump():
+        if self.wants_to_jump:
             self.jump()
 
         # Стрельба
@@ -161,7 +157,6 @@ class Player(arcade.Sprite):
 
     def take_damage(self, dmg):
         self.health -= dmg
-        return not self.check_if_alive()
 
     def check_if_alive(self):
         return self.health > 0
