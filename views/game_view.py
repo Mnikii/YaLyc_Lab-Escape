@@ -3,9 +3,20 @@ import arcade
 import math
 import subprocess
 import sys
-from typing import List, Tuple
+import os
+import time
+from typing import List
 from enum import Enum
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from player import Player as PlayerSprite
+from camera import CAMERA_LERP
+from level import get_level_config
+from enemy import Enemy
+from bullet import Bullet
+from effects import Effects
+
 
 class GameState(Enum):
     PLAYING = 1
@@ -20,7 +31,6 @@ class TileType(Enum):
     PLATFORM = 2
     SPIKE = 3
     EXIT = 4
-    MOVING_PLATFORM = 5
 
 
 # Константы
@@ -29,53 +39,73 @@ SCREEN_HEIGHT = 720
 SCREEN_TITLE = "Побег из лаборатории"
 
 # Физика
-GRAVITY = 0.5
-MAX_FALL_SPEED = 20
-JUMP_POWER = 15
-MOVE_SPEED = 5
+GRAVITY = 1.7
+MAX_FALL_SPEED = 40
+JUMP_POWER = 24
 
-PLAYER_WIDTH = 32
-PLAYER_HEIGHT = 48
-TILE_SIZE = 32
-
+TILE_SIZE = 35
 HUD_HEIGHT = 60
-GAME_AREA_HEIGHT = SCREEN_HEIGHT - HUD_HEIGHT
 
 
-class Player:
+class GamePlayer:
     def __init__(self, x: float, y: float):
-        self.x = x
-        self.y = y
-        self.width = PLAYER_WIDTH
-        self.height = PLAYER_HEIGHT
+        self.sprite = PlayerSprite()
+        self.sprite.center_x = x
+        self.sprite.center_y = y
 
-        self.velocity_x = 0
-        self.velocity_y = 0
-        self.is_jumping = False
-        self.is_on_ground = False
+        self.sprite_list = arcade.SpriteList()
+        self.sprite_list.append(self.sprite)
 
         self.score = 0
+        self.is_on_ground = False
+        self.hit_spike = False
 
-        self.moving_left = False
-        self.moving_right = False
+    @property
+    def x(self):
+        return self.sprite.center_x - self.sprite.width // 2
 
-    def update(self, level_tiles: List[List[int]], moving_platforms: List['MovingPlatform']):
-        self.velocity_y -= GRAVITY
-        self.velocity_y = max(self.velocity_y, -MAX_FALL_SPEED)
+    @property
+    def y(self):
+        return self.sprite.center_y - self.sprite.height // 2
 
-        self.velocity_x = 0
-        if self.moving_left:
-            self.velocity_x = -MOVE_SPEED
-        if self.moving_right:
-            self.velocity_x = MOVE_SPEED
+    @property
+    def width(self):
+        return self.sprite.width
 
-        self.x += self.velocity_x
-        self.y += self.velocity_y
+    @property
+    def height(self):
+        return self.sprite.height
+
+    # @property — геттер атрибута moving_left
+    @property
+    def moving_left(self):
+        return self.sprite.move_left
+
+    # @<имя>.setter — сеттер атрибута moving_left
+    @moving_left.setter
+    def moving_left(self, value):
+        self.sprite.move_left = value
+
+    @property
+    def moving_right(self):
+        return self.sprite.move_right
+
+    @moving_right.setter
+    def moving_right(self, value):
+        self.sprite.move_right = value
+
+    def update(self, delta_time, level_tiles: List[List[int]]):
+        self.sprite.change_y -= GRAVITY
+        self.sprite.change_y = max(self.sprite.change_y, -MAX_FALL_SPEED)
+
+        self.sprite.update(delta_time)
+
+        self.sprite.center_x += self.sprite.change_x
+        self.sprite.center_y += self.sprite.change_y
 
         self.is_on_ground = False
+        self.hit_spike = False
         self._check_collisions(level_tiles)
-        self._check_moving_platform_collisions(moving_platforms)
-
 
     def _check_collisions(self, level_tiles: List[List[int]]):
         if not level_tiles:
@@ -86,369 +116,339 @@ class Player:
 
         for row in range(grid_height):
             for col in range(grid_width):
-                if level_tiles[row][col] in [TileType.SOLID.value, TileType.PLATFORM.value]:
-                    tile_x = col * TILE_SIZE
-                    tile_y = row * TILE_SIZE
+                tile_type = level_tiles[row][col]
+                tile_x = col * TILE_SIZE
+                tile_y = (grid_height - 1 - row) * TILE_SIZE
 
-                    if self._check_rect_collision(tile_x, tile_y, TILE_SIZE, TILE_SIZE):
-                        # Разрешение столкновения
-                        self._resolve_collision(tile_x, tile_y, TILE_SIZE, TILE_SIZE)
+                # AABB проверка пересечения
+                if (self.x < tile_x + TILE_SIZE and
+                        self.x + self.width > tile_x and
+                        self.y < tile_y + TILE_SIZE and
+                        self.y + self.height > tile_y):
 
-    def _check_moving_platform_collisions(self, moving_platforms: List):
-        for platform in moving_platforms:
-            if self._check_rect_collision(platform.x, platform.y, platform.width, platform.height):
-                if self.velocity_y < 0 and self.y + self.height - platform.y > 0:
-                    self.y = platform.y + platform.height
-                    self.velocity_y = 0
-                    self.is_on_ground = True
+                    if tile_type == TileType.SPIKE.value:
+                        self.hit_spike = True
+                        return
 
-    def _check_rect_collision(self, rect_x: float, rect_y: float,
-                             rect_width: float, rect_height: float) -> bool:
-        return (self.x < rect_x + rect_width and
-                self.x + self.width > rect_x and
-                self.y < rect_y + rect_height and
-                self.y + self.height > rect_y)
+                    if tile_type in [TileType.SOLID.value, TileType.PLATFORM.value]:
+                        overlap_left = (self.x + self.width) - tile_x
+                        overlap_right = (tile_x + TILE_SIZE) - self.x
+                        overlap_top = (self.y + self.height) - tile_y
+                        overlap_bottom = (tile_y + TILE_SIZE) - self.y
 
-    def _resolve_collision(self, tile_x: float, tile_y: float,
-                          tile_width: float, tile_height: float):
-        overlap_left = (self.x + self.width) - tile_x
-        overlap_right = (tile_x + tile_width) - self.x
-        overlap_top = (self.y + self.height) - tile_y
-        overlap_bottom = (tile_y + tile_height) - self.y
+                        min_overlap = min(overlap_left, overlap_right, overlap_top, overlap_bottom)
 
-        min_overlap = min(overlap_left, overlap_right, overlap_top, overlap_bottom)
-
-        if min_overlap == overlap_bottom:
-            self.y = tile_y + tile_height
-            self.velocity_y = 0
-            self.is_on_ground = True
-        elif min_overlap == overlap_top:
-            self.y = tile_y - self.height
-            self.velocity_y = 0
-        elif min_overlap == overlap_left:
-            self.x = tile_x - self.width
-            self.velocity_x = 0
-        else:
-            self.x = tile_x + tile_width
-            self.velocity_x = 0
+                        if min_overlap == overlap_bottom:
+                            self.sprite.center_y = tile_y + TILE_SIZE + self.height // 2
+                            self.sprite.change_y = 0
+                            self.is_on_ground = True
+                        elif min_overlap == overlap_top:
+                            self.sprite.center_y = tile_y - self.height // 2
+                            self.sprite.change_y = 0
+                        elif min_overlap == overlap_left:
+                            self.sprite.center_x = tile_x - self.width // 2
+                        else:
+                            self.sprite.center_x = tile_x + TILE_SIZE + self.width // 2
 
     def jump(self):
         if self.is_on_ground:
-            self.velocity_y = JUMP_POWER
-            self.is_jumping = True
+            self.sprite.change_y = JUMP_POWER
             self.is_on_ground = False
 
     def draw(self):
-        # Игрока
-        arcade.draw_lbwh_rectangle_filled(
-            int(self.x),
-            int(self.y),
-            int(self.width),
-            int(self.height),
-            arcade.color.BLUE
-        )
-
-        eye_offset = 4 if not self.moving_left else -4
-        arcade.draw_circle_filled(
-            int(self.x + self.width // 2 + eye_offset),
-            int(self.y + self.height - 10),
-            3,
-            arcade.color.WHITE
-        )
-
-
-class Particle:
-    def __init__(self, x: float, y: float, velocity_x: float, velocity_y: float,
-                 color: Tuple, lifetime: int = 30):
-        self.x = x
-        self.y = y
-        self.velocity_x = velocity_x
-        self.velocity_y = velocity_y
-        self.color = color
-        self.lifetime = lifetime
-        self.max_lifetime = lifetime
-
-    def update(self):
-        self.x += self.velocity_x
-        self.y += self.velocity_y
-        self.velocity_y -= GRAVITY
-        self.lifetime -= 1
-
-    def draw(self):
-        size = 4.0 * (self.lifetime / self.max_lifetime)
-        arcade.draw_circle_filled(
-            int(self.x), int(self.y), max(1, int(size)), arcade.color.WHITE)
-
-    def is_alive(self) -> bool:
-        return self.lifetime > 0
+        self.sprite_list.draw()
 
 
 class GameView(arcade.View):
     def __init__(self, level: int = 1):
         super().__init__()
 
-        self.bg_color = (32, 60, 80)
-
         self.game_state = GameState.PLAYING
         self.current_level = level
         self.start_time = datetime.now()
 
         self.player = None
-        self.particles: List[Particle] = []
+        self.enemies = arcade.SpriteList()
+        self.wall_list = arcade.SpriteList()
+        self.bullet_list = arcade.SpriteList()
+        self.player_damage_cooldown = 0.0
+        self.player_damage_delay = 0.6
+
+        self.world_camera = arcade.camera.Camera2D()
+        self.gui_camera = arcade.camera.Camera2D()
 
         self.level_tiles: List[List[int]] = []
-        self.exit_rect = None
+        self.level_name = ""
 
-        # Камера
-        self.camera_x = 0
-        self.camera_y = 0
-        self.camera_width = SCREEN_WIDTH
-        self.camera_height = GAME_AREA_HEIGHT
+        # Эффекты
+        self.effects = Effects()
+        self.emitters = []
 
         self._load_level(level)
 
     def _load_level(self, level: int):
-        self.level_tiles = []
+        config = get_level_config(level)
 
-        if level == 1:
-            self._create_laboratory_level()
-        elif level == 2:
-            self._create_dungeon_level()
-        elif level == 3:
-            self._create_exit_level()
+        self.level_tiles = config['tiles']
+        self.level_name = config['name']
 
-    def _create_laboratory_level(self):
-        # Первый уровень (лаборатория)
-        # 0 - пусто, 1 - стена, 2 - платформа, 3 - ловушка, 4 - выход
+        player_x, player_y = config['player_pos']
+        self.player = GamePlayer(player_x, player_y)
 
-        self.level_tiles = [
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 0, 0, 1],
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        ]
+        self.wall_list = self._build_wall_list()
+        self._spawn_enemies(config.get('enemy_count', 0))
 
-        # Начальная позиция игрока
-        self.player = Player(100, 200)
+    def _build_wall_list(self):
+        wall_list = arcade.SpriteList()
+        grid_height = len(self.level_tiles)
 
+        for row in range(grid_height):
+            for col in range(len(self.level_tiles[row])):
+                tile_type = self.level_tiles[row][col]
+                if tile_type in (TileType.SOLID.value, TileType.PLATFORM.value):
+                    wall = arcade.SpriteSolidColor(TILE_SIZE, TILE_SIZE, arcade.color.TRANSPARENT_BLACK)
+                    wall.center_x = col * TILE_SIZE + TILE_SIZE / 2
+                    wall.center_y = (grid_height - 1 - row) * TILE_SIZE + TILE_SIZE / 2
+                    wall_list.append(wall)
 
-        self.exit_rect = (1180, 100, 80, 80)
+        return wall_list
 
-    def _create_dungeon_level(self):
-        # 2 уровень (подземелье. потом апдейт графики)
-        self.level_tiles = [
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        ]
+    def _spawn_enemies(self, count: int):
+        self.enemies = arcade.SpriteList()
+        if count <= 0:
+            return
 
-        self.player = Player(100, 200)
+        config = get_level_config(self.current_level)
+        spawn_points = config.get('enemy_spawns', [])
 
+        if spawn_points:
+            for spawn_point in spawn_points[:count]:
+                enemy = Enemy(self.player.sprite, self.wall_list, spawn_point=spawn_point)
+                self.enemies.append(enemy)
+            return
 
-        self.exit_rect = (1180, 100, 80, 80)
-
-    def _create_exit_level(self):
-        # Последний уровень
-        self.level_tiles = [
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 0, 0, 1],
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        ]
-
-        self.player = Player(100, 200)
-
-
-        self.exit_rect = (1180, 100, 80, 80)
+        for _ in range(count):
+            enemy = Enemy(self.player.sprite, self.wall_list)
+            self.enemies.append(enemy)
 
     def on_draw(self):
         self.clear()
 
+        self.world_camera.use()
         self._draw_level()
-
-        for particle in self.particles:
-            particle.draw()
-
+        self.bullet_list.draw()
+        if self.enemies:
+            self.enemies.draw()
         if self.player:
             self.player.draw()
 
-        # Отрисовка выхода
-        if self.exit_rect:
-            arcade.draw_lbwh_rectangle_filled(
-                int(self.exit_rect[0]),
-                int(self.exit_rect[1]),
-                int(self.exit_rect[2]),
-                int(self.exit_rect[3]),
-                arcade.color.GOLD
-            )
-            arcade.draw_lbwh_rectangle_outline(
-                int(self.exit_rect[0]),
-                int(self.exit_rect[1]),
-                int(self.exit_rect[2]),
-                int(self.exit_rect[3]),
-                arcade.color.YELLOW,
-                3
-            )
+        # Отрисовка эффектов
+        for emitter in self.emitters:
+            emitter.draw()
 
+        self.gui_camera.use()
         self._draw_hud()
 
     def _draw_level(self):
-        for row in range(len(self.level_tiles)):
+        grid_height = len(self.level_tiles)
+
+        for row in range(grid_height):
             for col in range(len(self.level_tiles[row])):
                 tile_type = self.level_tiles[row][col]
                 x = col * TILE_SIZE
-                y = row * TILE_SIZE
+                y = (grid_height - 1 - row) * TILE_SIZE
 
                 if tile_type == TileType.SOLID.value:
-                    arcade.draw_lbwh_rectangle_filled(
-                        x, y,
-                        TILE_SIZE, TILE_SIZE,
-                        arcade.color.DARK_SLATE_GRAY
-                    )
+                    arcade.draw_lbwh_rectangle_filled(x, y, TILE_SIZE, TILE_SIZE, (40, 40, 45))
+                    arcade.draw_lbwh_rectangle_outline(x, y, TILE_SIZE, TILE_SIZE, (60, 60, 70), 2)
                 elif tile_type == TileType.PLATFORM.value:
-                    arcade.draw_lbwh_rectangle_filled(
-                        x, y,
-                        TILE_SIZE, TILE_SIZE,
-                        arcade.color.SLATE_GRAY
-                    )
-                    arcade.draw_lbwh_rectangle_outline(
-                        x, y,
-                        TILE_SIZE, TILE_SIZE,
-                        arcade.color.LIGHT_GRAY,
-                        1
-                    )
+                    arcade.draw_lbwh_rectangle_filled(x, y + TILE_SIZE // 4, TILE_SIZE, TILE_SIZE // 2, (100, 110, 120))
+                    arcade.draw_lbwh_rectangle_filled(x, y + TILE_SIZE - 4, TILE_SIZE, 4, (150, 160, 180))
+                elif tile_type == TileType.SPIKE.value:
+                    arcade.draw_triangle_filled(x, y, x + TILE_SIZE // 2, y + TILE_SIZE, x + TILE_SIZE, y, (200, 50, 50))
+                elif tile_type == TileType.EXIT.value:
+                    glow = 150 + int(100 * math.sin(time.time() * 3))
+                    arcade.draw_lbwh_rectangle_filled(x, y, TILE_SIZE, TILE_SIZE, (0, 255, 100, glow))
+                    arcade.draw_lbwh_rectangle_outline(x, y, TILE_SIZE, TILE_SIZE, arcade.color.WHITE, 2)
 
     def _draw_hud(self):
-        arcade.draw_lbwh_rectangle_filled(
-            0, SCREEN_HEIGHT - HUD_HEIGHT,
-            SCREEN_WIDTH, HUD_HEIGHT,
-            arcade.color.BLACK
-        )
+        arcade.draw_lbwh_rectangle_filled(0, SCREEN_HEIGHT - HUD_HEIGHT, SCREEN_WIDTH, HUD_HEIGHT, arcade.color.BLACK)
 
-        # Очки
-        arcade.draw_text(f"Очки: {self.player.score}", 400, SCREEN_HEIGHT - 40,
-                        arcade.color.WHITE, 14)
+        arcade.draw_text(self.level_name, 100, SCREEN_HEIGHT - 40, arcade.color.YELLOW, 16, bold=True)
+        arcade.draw_text(f"Очки: {self.player.score}", 450, SCREEN_HEIGHT - 40, arcade.color.WHITE, 14)
+        arcade.draw_text(f"HP: {self.player.sprite.health}", 600, SCREEN_HEIGHT - 40, arcade.color.WHITE, 14)
+        arcade.draw_text(f"Уровень: {self.current_level}/3", 780, SCREEN_HEIGHT - 40, arcade.color.WHITE, 14)
 
-        # Уровень
-        arcade.draw_text(f"Уровень: {self.current_level}/3", 700, SCREEN_HEIGHT - 40,
-                        arcade.color.WHITE, 14)
-
-        # Время
-        elapsed_time = (datetime.now() - self.start_time).total_seconds()
-        minutes = int(elapsed_time // 60)
-        seconds = int(elapsed_time % 60)
-        arcade.draw_text(f"Время: {minutes:02d}:{seconds:02d}", 1000, SCREEN_HEIGHT - 40,
-                        arcade.color.WHITE, 14)
+        elapsed = (datetime.now() - self.start_time).total_seconds()
+        arcade.draw_text(f"Время: {int(elapsed // 60):02d}:{int(elapsed % 60):02d}", 1000, SCREEN_HEIGHT - 40, arcade.color.WHITE, 14)
 
     def on_update(self, delta_time: float):
         if self.game_state != GameState.PLAYING:
             return
 
-        self.player.update(self.level_tiles, [])
+        self.player.update(delta_time, self.level_tiles)
 
-        self.particles = [p for p in self.particles if p.is_alive()]
-        for particle in self.particles:
-            particle.update()
+        for enemy in self.enemies:
+            enemy.update(delta_time)
 
-        if self.exit_rect:
-            if (self.player.x < self.exit_rect[0] + self.exit_rect[2] and
-                self.player.x + self.player.width > self.exit_rect[0] and
-                self.player.y < self.exit_rect[1] + self.exit_rect[3] and
-                self.player.y + self.player.height > self.exit_rect[1]):
-                self._on_level_complete()
+        self.bullet_list.update()
+
+        # Попадание пуль по врагам
+        for bullet in self.bullet_list:
+            hit_enemies = arcade.check_for_collision_with_list(bullet, self.enemies)
+            for enemy in hit_enemies:
+                # Создаём взрыв при убийстве врага
+                if enemy.health <= bullet.damage:
+                    explosion = self.effects.make_explosion(enemy.center_x, enemy.center_y)
+                    self.emitters.append(explosion)
+                enemy.take_damage(bullet.damage)
+                bullet.kill()
+                self.player.score += 50
+                break
+
+        # Урон от врагов
+        if self.player_damage_cooldown > 0:
+            self.player_damage_cooldown -= delta_time
+        if self.player_damage_cooldown <= 0:
+            hits = arcade.check_for_collision_with_list(self.player.sprite, self.enemies)
+            if hits:
+                damage = max((getattr(e, "damage", 10) for e in hits), default=10)
+                self.player.sprite.take_damage(damage)
+                self.player_damage_cooldown = self.player_damage_delay
+
+        # Проверки смерти/шипов/падения
+        if self.player.sprite.health <= 0 or self.player.hit_spike or self.player.y < -100:
+            self._restart_level()
+            return
+
+        # Проверка выхода
+        if self._player_hits_exit_tile():
+            self._on_level_complete()
+
+        # Обновление эффектов
+        for emitter in self.emitters:
+            emitter.update()
+        # Удаляем завершённые эмиттеры
+        self.emitters = [e for e in self.emitters if not e.can_reap()]
 
         self._update_camera()
 
-    def _create_particles(self, x: float, y: float, color: Tuple, count: int = 10):
-        for i in range(count):
-            angle = (360 / count) * i
-            speed = 3
-            vx = math.cos(math.radians(angle)) * speed
-            vy = math.sin(math.radians(angle)) * speed
-            self.particles.append(Particle(x, y, vx, vy, color, 30))
+    def _restart_level(self):
+        config = get_level_config(self.current_level)
+        player_x, player_y = config['player_pos']
+        self.player.sprite.center_x = player_x
+        self.player.sprite.center_y = player_y
+        self.player.sprite.change_x = 0
+        self.player.sprite.change_y = 0
+        self.player.sprite.health = 100
+        self.player_damage_cooldown = 0.0
+        self.player.hit_spike = False
+        self.player.is_on_ground = False
+
+        self.wall_list = self._build_wall_list()
+        self._spawn_enemies(get_level_config(self.current_level).get('enemy_count', 0))
 
     def _update_camera(self):
-        # камера
-        target_x = self.player.x + self.player.width // 2 - self.camera_width // 2
-        target_y = self.player.y + self.player.height // 2 - self.camera_height // 2
+        target_x = self.player.sprite.center_x
+        target_y = self.player.sprite.center_y
 
-        self.camera_x += (target_x - self.camera_x) * 0.1
+        current_x, current_y = self.world_camera.position
+        new_x = current_x + (target_x - current_x) * CAMERA_LERP
+        new_y = current_y + (target_y - current_y) * CAMERA_LERP
 
-        level_width = len(self.level_tiles[0]) * TILE_SIZE if self.level_tiles else 0
-        level_height = len(self.level_tiles) * TILE_SIZE
+        grid_width = len(self.level_tiles[0]) if self.level_tiles else 0
+        grid_height = len(self.level_tiles) if self.level_tiles else 0
+        level_width_px = grid_width * TILE_SIZE
+        level_height_px = grid_height * TILE_SIZE
 
-        self.camera_x = max(0, min(self.camera_x, level_width - self.camera_width))
-        self.camera_y = max(0, min(self.camera_y, level_height - self.camera_height))
+        half_w = SCREEN_WIDTH / 2
+        half_h = SCREEN_HEIGHT / 2
+
+        if level_width_px > SCREEN_WIDTH:
+            new_x = max(half_w, min(new_x, level_width_px - half_w))
+        else:
+            new_x = half_w
+
+        if level_height_px > SCREEN_HEIGHT:
+            new_y = max(half_h, min(new_y, level_height_px - half_h))
+        else:
+            new_y = half_h
+
+        self.world_camera.position = (new_x, new_y)
 
     def _on_level_complete(self):
         self.player.score += 1000
 
+        # Конфетти при победе
+        confetti = self.effects.make_confetti(self.player.sprite.center_x, self.player.sprite.center_y)
+        self.emitters.append(confetti)
+
         if self.current_level < 3:
-            view = GameView(self.current_level + 1)
-            self.window.show_view(view)
+            self.window.show_view(GameView(self.current_level + 1))
         else:
             self.game_state = GameState.GAME_OVER_WIN
 
-            elapsed_time = (datetime.now() - self.start_time).total_seconds()
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            timer_str = f"{minutes:02d}:{seconds:02d}"
+            elapsed = (datetime.now() - self.start_time).total_seconds()
+            timer_str = f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}"
 
-            import os
             main_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py")
-
             arcade.close_window()
-
             subprocess.Popen([
-                sys.executable,
-                main_path,
-                "game_over",
-                "True",  # result
-                str(self.player.score),  # score
-                timer_str,  # timer
-                f"Пройдено уровней: {self.current_level}/3"  # statistic
+                sys.executable, main_path, "game_over", "True",
+                str(self.player.score), timer_str, f"Пройдено уровней: {self.current_level}/3"
             ])
 
-
     def on_key_press(self, key: int, modifiers: int):
-        if key == arcade.key.D or key == arcade.key.RIGHT:
+        if key in (arcade.key.D, arcade.key.RIGHT):
             self.player.moving_right = True
-        elif key == arcade.key.A or key == arcade.key.LEFT:
+        elif key in (arcade.key.A, arcade.key.LEFT):
             self.player.moving_left = True
-        elif key == arcade.key.W or key == arcade.key.UP or key == arcade.key.SPACE:
+        elif key in (arcade.key.W, arcade.key.UP, arcade.key.SPACE):
             self.player.jump()
         elif key == arcade.key.ESCAPE:
-            arcade.close_window()
-
+            from views.menu_view import MenuView
+            self.window.show_view(MenuView())
 
     def on_key_release(self, key: int, modifiers: int):
-        if key == arcade.key.D or key == arcade.key.RIGHT:
+        if key in (arcade.key.D, arcade.key.RIGHT):
             self.player.moving_right = False
-        elif key == arcade.key.A or key == arcade.key.LEFT:
+        elif key in (arcade.key.A, arcade.key.LEFT):
             self.player.moving_left = False
 
+    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
+        if button == arcade.MOUSE_BUTTON_LEFT:
+            world_x, world_y = self.world_camera.position
+            target_x = world_x - SCREEN_WIDTH / 2 + x
+            target_y = world_y - SCREEN_HEIGHT / 2 + y
+
+            bullet = Bullet(
+                start_x=self.player.sprite.center_x,
+                start_y=self.player.sprite.center_y,
+                target_x=target_x,
+                target_y=target_y
+            )
+            self.bullet_list.append(bullet)
+
+    def _player_hits_exit_tile(self) -> bool:
+        grid_height = len(self.level_tiles)
+        if grid_height == 0:
+            return False
+
+        player_left = self.player.x
+        player_right = self.player.x + self.player.width
+        player_bottom = self.player.y
+        player_top = self.player.y + self.player.height
+
+        for row in range(grid_height):
+            for col in range(len(self.level_tiles[row])):
+                if self.level_tiles[row][col] != TileType.EXIT.value:
+                    continue
+                tile_x = col * TILE_SIZE
+                tile_y = (grid_height - 1 - row) * TILE_SIZE
+                if (player_left < tile_x + TILE_SIZE and
+                        player_right > tile_x and
+                        player_bottom < tile_y + TILE_SIZE and
+                        player_top > tile_y):
+                    return True
+
+        return False
