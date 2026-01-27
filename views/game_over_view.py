@@ -1,41 +1,44 @@
 # Экран завершения
-
 import arcade
-import random
-from arcade.gui import UIManager, UIFlatButton, UITextureButton, UILabel, UIInputText, UITextArea, UISlider, UIDropdown, \
-    UIMessageBox
+from arcade.gui import UIManager, UIFlatButton, UITextureButton, UILabel, UIMessageBox
 from arcade.gui.widgets.layout import UIAnchorLayout, UIBoxLayout
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
 
 
-class Game_Over_View(arcade.Window):
-    def __init__(self):
-        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, "ИГРА ОКОНЧЕНА🧪")
-        arcade.set_background_color((30, 30, 50)) #MIDNIGHT_BLUE BLACK TAUPE_GRAY) LAVENDER_BLUSH (5, 5, 15)
-        # к примеру !
-        self.result = True
-        self.timer = "15:36"
-        self.score = "16500"
-        self.statistic = ...
-        # !
+class Game_Over_View(arcade.View):
+    def __init__(self, result=True, score="0", timer="00:00", statistic="Игра завершена"):
+        super().__init__()
+        self.result = result
+        self.timer = timer
+        self.score = score
+        self.statistic = statistic
+
+        self.manager = None
+
+    def on_show_view(self):
+        arcade.set_background_color((30, 30, 50, 255))
+
         self.manager = UIManager()
         self.manager.enable()
 
-        self.anchor_layout = UIAnchorLayout()  # Центрирует виджеты
-        self.box_layout = UIBoxLayout(vertical=True, space_between=20)  # Вертикальный стек
+        self.anchor_layout = UIAnchorLayout()
+        self.box_layout = UIBoxLayout(vertical=True, space_between=20)
 
-        # Добавим все виджеты в box, потом box в anchor
-        self.setup_widgets()  # Функция ниже
+        self.setup_widgets()
 
-        self.anchor_layout.add(self.box_layout)  # Box в anchor
-        self.manager.add(self.anchor_layout)  # Всё в manager
+        self.anchor_layout.add(self.box_layout)
+        self.manager.add(self.anchor_layout)
+
+    def on_hide_view(self):
+        if self.manager:
+            self.manager.disable()
 
     def setup_widgets(self):
         label = UILabel(text="ИГРА ОКОНЧЕНА",
                         font_size=40,
-                        text_color=arcade.color.ELECTRIC_BLUE, #OLD_SILVER, DARK_BLUE PALE_TURQUOISE
+                        text_color=arcade.color.ELECTRIC_BLUE, # также доступны: OLD_SILVER, DARK_BLUE PALE_TURQUOISE
                         width=300,
                         align="center")
         self.box_layout.add(label)
@@ -81,16 +84,10 @@ class Game_Over_View(arcade.Window):
         self.manager.draw()
 
     def on_click_open(self, event):
-        warning_box = UIMessageBox(
-            width=300, height=200,
-            message_text="Сохрани статистику перед выходом!!\nХочешь продолжить?",
-            buttons=("Да", "Нет")
-        )
-        self.manager.add(warning_box)
-        if warning_box:
-            pass  # вернуться на шлавный экран
-        else:
-            pass  # остаемся
+        # Возвращаемся в главное меню
+        from views.menu_view import MenuView
+        menu = MenuView()
+        self.window.show_view(menu)
 
     def show_statistics(self, event):
         stats_box = UIMessageBox(
