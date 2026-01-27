@@ -51,6 +51,7 @@ class Player(arcade.Sprite):
         #  Передача списка пуль из main
         self.bullet_list = bullet_list
 
+    # Движение на wasd/стрелками, меняем направление взгляда игрока если нужно
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.A, arcade.key.LEFT):
             self.move_left = True
@@ -73,6 +74,7 @@ class Player(arcade.Sprite):
         if key in (arcade.key.W, arcade.key.UP, arcade.key.SPACE):
             self.wants_to_jump = False
 
+    # target хранит координаты клика мышкой, выстрел в последнюю точку куда кликнули
     def on_mouse_press(self, x, y, button, modifiers):
         if button == arcade.MOUSE_BUTTON_LEFT:
             self.wants_to_shoot = True
@@ -82,6 +84,7 @@ class Player(arcade.Sprite):
         if button == arcade.MOUSE_BUTTON_LEFT:
             self.wants_to_shoot = False
 
+    # анимация, если игрок ходит текстура меняется каждую 0,1 секунды(texture_change_delay)
     def update_animation(self, delta_time):
         walking = self.move_left or self.move_right
 
@@ -100,17 +103,18 @@ class Player(arcade.Sprite):
                     self.texture = self.walk_textures[self.current_texture].flip_horizontally()
         else:
             self.is_walking = False
+            # 0 - право, 1 - лево, отзеркаливаем текстуру если игрок смотрит налево
             if self.face_direction == 0:
                 self.texture = self.idle_texture
             else:
                 self.texture = self.idle_texture.flip_horizontally()
 
-    def on_land(self):  # Вызывается в main в момент приземления
+    def on_land(self):  # Вызывается в main в момент приземления, обновляем кол-во доступных прыжков
         self.jumps_available = 2
         self.is_jumping = False
         self.on_ground = True
 
-    def jump(self):
+    def jump(self): # Прыжок только если есть доступные(можно совершить максимум двойной прыжок)
         if self.jumps_available > 0:
             self.change_y = self.speed_y
             self.jumps_available -= 1
@@ -120,6 +124,7 @@ class Player(arcade.Sprite):
             return True
         return False
 
+    # Если можем выстрелить, есть цель и передан список пуль
     def shoot(self, target):
         x, y = target
         if x is not None and y is not None and self.bullet_list is not None:
@@ -144,19 +149,21 @@ class Player(arcade.Sprite):
             self.jump()
 
         # Стрельба
-        if self.shoot_timer > 0:
+        if self.shoot_timer > 0:  # обновление таймера перезаярдки
             self.shoot_timer -= delta_time
 
+        # Выстрел только если прошла перезарядка(self.shoot_timer)
         if self.wants_to_shoot and self.shoot_timer <= 0:
             self.shoot(self.target)
             self.shoot_timer = self.shoot_cooldown
             self.wants_to_shoot = False
 
-        # Анимация
+        # Обновление анимации
         self.update_animation(delta_time)
 
     def take_damage(self, dmg):
         self.health -= dmg
 
+    # Проверка, жив ли игрок
     def check_if_alive(self):
         return self.health > 0
