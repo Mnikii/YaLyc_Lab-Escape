@@ -180,11 +180,15 @@ class GameView(arcade.View):
         self.level_tiles: List[List[int]] = []
         self.level_name = ""
 
-        # Эффекты
-        self.effects = Effects()
+        # Эффекты: отложенная инициализация, потому что они создают текстуры
+        self.effects = None
+        self._effects_pending = True
         self.emitters = []
 
         self._load_level(level)
+
+    def on_show_view(self):
+        self._effects_pending = True
 
     def _load_level(self, level: int):
         config = get_level_config(level)
@@ -234,6 +238,16 @@ class GameView(arcade.View):
     def on_draw(self):
         self.clear()
 
+        window = arcade.get_window()
+        if self._effects_pending and window is not None and getattr(window, 'ctx', None) is not None:
+            try:
+                self.effects = Effects()
+            except Exception:
+                self.effects = None
+                self._effects_pending = True
+            else:
+                self._effects_pending = False
+
         self.world_camera.use()
         self._draw_level()
         self.bullet_list.draw()
@@ -242,9 +256,14 @@ class GameView(arcade.View):
         if self.player:
             self.player.draw()
 
-        # Отрисовка эффектов
-        for emitter in self.emitters:
-            emitter.draw()
+        # Отрисовка эффектов (только если инициализированы и GL контекст доступен)
+        if not self._effects_pending and self.effects is not None and window is not None and getattr(window, 'ctx', None) is not None:
+            for emitter in self.emitters:
+                try:
+                    emitter.draw()
+                except Exception:
+                    # protect against particle errors
+                    pass
 
         self.gui_camera.use()
         self._draw_hud()
@@ -297,10 +316,14 @@ class GameView(arcade.View):
         for bullet in self.bullet_list:
             hit_enemies = arcade.check_for_collision_with_list(bullet, self.enemies)
             for enemy in hit_enemies:
-                # Создаём взрыв при убийстве врага
-                if enemy.health <= bullet.damage:
-                    explosion = self.effects.make_explosion(enemy.center_x, enemy.center_y)
-                    self.emitters.append(explosion)
+                # Создаём взрыв при убийстве врага (только если эффекты и GL готовы)
+                window = arcade.get_window()
+                if enemy.health <= bullet.damage and not self._effects_pending and self.effects is not None and window is not None and getattr(window, 'ctx', None) is not None:
+                    try:
+                        explosion = self.effects.make_explosion(enemy.center_x, enemy.center_y)
+                        self.emitters.append(explosion)
+                    except Exception:
+                        pass
                 enemy.take_damage(bullet.damage)
                 bullet.kill()
                 self.player.score += 50
@@ -325,10 +348,18 @@ class GameView(arcade.View):
         if self._player_hits_exit_tile():
             self._on_level_complete()
 
-        # Обновление эффектов
-        for emitter in self.emitters:
-            emitter.update()
-        self.emitters = [e for e in self.emitters if not e.can_reap()]
+        # Обновление эффектов (только если есть окно/GL контекст и эффекты инициализированы)
+        window = arcade.get_window()
+        if window is not None and getattr(window, 'ctx', None) is not None and not self._effects_pending and self.effects is not None:
+            new_emitters = []
+            for emitter in self.emitters:
+                try:
+                    emitter.update()
+                    if not emitter.can_reap():
+                        new_emitters.append(emitter)
+                except Exception:
+                    continue
+            self.emitters = new_emitters
 
         self._update_camera()
 
@@ -378,9 +409,14 @@ class GameView(arcade.View):
     def _on_level_complete(self):
         self.player.score += 1000
 
-        # Конфетти при победе
-        confetti = self.effects.make_confetti(self.player.sprite.center_x, self.player.sprite.center_y)
-        self.emitters.append(confetti)
+        # Конфетти при победе (только если эффекты и GL готовы)
+        window = arcade.get_window()
+        if not self._effects_pending and self.effects is not None and window is not None and getattr(window, 'ctx', None) is not None:
+            try:
+                confetti = self.effects.make_confetti(self.player.sprite.center_x, self.player.sprite.center_y)
+                self.emitters.append(confetti)
+            except Exception:
+                pass
 
         if self.current_level < 3:
             self.window.show_view(GameView(self.current_level + 1))

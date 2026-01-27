@@ -6,12 +6,10 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'game_statistics.db')
 
 
 def get_connection():
-    """Получить соединение с базой данных"""
     return sqlite3.connect(DB_PATH)
 
 
 def init_database():
-    """Инициализация базы данных и создание таблицы"""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -31,7 +29,6 @@ def init_database():
 
 
 def save_game_stats(result: str, game_time: str, score: int, enemies_killed: int, levels_completed: int):
-    """Сохранить статистику игры в базу данных"""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -45,7 +42,6 @@ def save_game_stats(result: str, game_time: str, score: int, enemies_killed: int
 
 
 def get_last_game_stats():
-    """Получить статистику последней игры"""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -60,7 +56,6 @@ def get_last_game_stats():
 
 
 def get_average_score():
-    """Получить средний счёт по всем играм"""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -72,7 +67,6 @@ def get_average_score():
 
 
 def get_all_stats():
-    """Получить всю статистику"""
     conn = get_connection()
     cursor = conn.cursor()
 
