@@ -62,10 +62,10 @@ class MenuView(arcade.View):
         box_layout.add(exit_button)
 
         controls_label = UILabel(
-            text="Управление: A/D или ←/→ - движение, Пробел - прыжок",
+            text="Управление: A/D или ←/→ - движение, Пробел - прыжок, ЛКМ - стрельба",
             font_size=14,
             text_color=arcade.color.LIGHT_GRAY,
-            width=500,
+            width=600,
             align="center"
         )
         box_layout.add(controls_label)
