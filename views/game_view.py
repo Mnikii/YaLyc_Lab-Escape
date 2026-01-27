@@ -15,6 +15,7 @@ from camera import CAMERA_LERP
 from level import get_level_config
 from enemy import Enemy
 from bullet import Bullet
+from effects import Effects
 
 
 class GameState(Enum):
@@ -179,6 +180,10 @@ class GameView(arcade.View):
         self.level_tiles: List[List[int]] = []
         self.level_name = ""
 
+        # Эффекты
+        self.effects = Effects()
+        self.emitters = []
+
         self._load_level(level)
 
     def _load_level(self, level: int):
@@ -237,6 +242,10 @@ class GameView(arcade.View):
         if self.player:
             self.player.draw()
 
+        # Отрисовка эффектов
+        for emitter in self.emitters:
+            emitter.draw()
+
         self.gui_camera.use()
         self._draw_hud()
 
@@ -288,6 +297,10 @@ class GameView(arcade.View):
         for bullet in self.bullet_list:
             hit_enemies = arcade.check_for_collision_with_list(bullet, self.enemies)
             for enemy in hit_enemies:
+                # Создаём взрыв при убийстве врага
+                if enemy.health <= bullet.damage:
+                    explosion = self.effects.make_explosion(enemy.center_x, enemy.center_y)
+                    self.emitters.append(explosion)
                 enemy.take_damage(bullet.damage)
                 bullet.kill()
                 self.player.score += 50
@@ -311,6 +324,12 @@ class GameView(arcade.View):
         # Проверка выхода
         if self._player_hits_exit_tile():
             self._on_level_complete()
+
+        # Обновление эффектов
+        for emitter in self.emitters:
+            emitter.update()
+        # Удаляем завершённые эмиттеры
+        self.emitters = [e for e in self.emitters if not e.can_reap()]
 
         self._update_camera()
 
@@ -359,6 +378,10 @@ class GameView(arcade.View):
 
     def _on_level_complete(self):
         self.player.score += 1000
+
+        # Конфетти при победе
+        confetti = self.effects.make_confetti(self.player.sprite.center_x, self.player.sprite.center_y)
+        self.emitters.append(confetti)
 
         if self.current_level < 3:
             self.window.show_view(GameView(self.current_level + 1))
