@@ -1,13 +1,12 @@
 import arcade
-from bullet import Bullet
 
 
 class Player(arcade.Sprite):
     def __init__(self):
         super().__init__()
         self.scale = 1.0
-        self.speed_x = 7
-        self.speed_y = 17
+        self.speed_x = 10
+        self.speed_y = 30
         self.health = 100
 
         # Движение
@@ -19,16 +18,13 @@ class Player(arcade.Sprite):
         self.is_jumping = False
         self.on_ground = True
 
-        # Стрельба
-        self.bullet_list = None  # Будет установлено в main.py
-        self.shoot_cooldown = 0.3
-        self.shoot_timer = 0
-        self.target = None, None
-
         # Текстуры
         self.idle_texture = arcade.load_texture(
             ":resources:/images/animated_characters/male_person/malePerson_idle.png")
         self.texture = self.idle_texture
+
+        self.jump_texture = arcade.load_texture(
+            ":resources:/images/animated_characters/male_person/malePerson_jump.png")
 
         self.walk_textures = []
         for i in range(0, 8):
@@ -44,12 +40,8 @@ class Player(arcade.Sprite):
         self.face_direction = 0  # 0 - вправо, 1 - влево
 
         # Управление
-        self.move_left, self.move_right, self.wants_to_jump = False, False, False
-        self.wants_to_shoot = False
-
-    def set_bullet_list(self, bullet_list):
-        """Устанавливает список пуль"""
-        self.bullet_list = bullet_list
+        self.move_left = False
+        self.move_right = False
 
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.A, arcade.key.LEFT):
@@ -60,27 +52,12 @@ class Player(arcade.Sprite):
             self.move_right = True
             self.face_direction = 0
 
-        if key in (arcade.key.W, arcade.key.UP, arcade.key.SPACE):
-            self.wants_to_jump = True
-
     def on_key_release(self, key, modifiers):
         if key in (arcade.key.A, arcade.key.LEFT):
             self.move_left = False
 
         if key in (arcade.key.D, arcade.key.RIGHT):
             self.move_right = False
-
-        if key in (arcade.key.W, arcade.key.UP, arcade.key.SPACE):
-            self.wants_to_jump = False
-
-    def on_mouse_press(self, x, y, button, modifiers):
-        if button == arcade.MOUSE_BUTTON_LEFT:
-            self.wants_to_shoot = True
-            self.target = x, y
-
-    def on_mouse_release(self, x, y, button, modifiers):
-        if button == arcade.MOUSE_BUTTON_LEFT:
-            self.wants_to_shoot = False
 
     def update_animation(self, delta_time):
         walking = self.move_left or self.move_right
@@ -111,30 +88,6 @@ class Player(arcade.Sprite):
             else:
                 self.texture = self.idle_texture.flip_horizontally()
 
-    def can_jump(self):
-        return self.jumps_available > 0
-
-    def jump(self):
-        if self.can_jump():
-            self.change_y = self.speed_y
-            self.jumps_available -= 1
-            self.is_jumping = True
-            self.on_ground = False
-            self.wants_to_jump = False
-            return True
-        return False
-
-    def shoot(self, target):
-        x, y = target
-        if x is not None and y is not None and self.bullet_list is not None:
-            bullet = Bullet(
-                start_x=self.center_x,
-                start_y=self.center_y,
-                target_x=x,
-                target_y=y
-            )
-            self.bullet_list.append(bullet)
-
     def update(self, delta_time):
         # Управление движением
         self.change_x = 0
@@ -142,19 +95,6 @@ class Player(arcade.Sprite):
             self.change_x = -self.speed_x
         if self.move_right:
             self.change_x = self.speed_x
-
-        # Прыжок
-        if self.wants_to_jump and self.can_jump():
-            self.jump()
-
-        # Стрельба
-        if self.shoot_timer > 0:
-            self.shoot_timer -= delta_time
-
-        if self.wants_to_shoot and self.shoot_timer <= 0:
-            self.shoot(self.target)
-            self.shoot_timer = self.shoot_cooldown
-            self.wants_to_shoot = False
 
         # Анимация
         self.update_animation(delta_time)
@@ -165,3 +105,4 @@ class Player(arcade.Sprite):
 
     def check_if_alive(self):
         return self.health > 0
+

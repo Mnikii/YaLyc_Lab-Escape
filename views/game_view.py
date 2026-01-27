@@ -39,11 +39,11 @@ SCREEN_HEIGHT = 720
 SCREEN_TITLE = "Побег из лаборатории"
 
 # Физика
-GRAVITY = 1.7
-MAX_FALL_SPEED = 40
+GRAVITY = 1.8
+MAX_FALL_SPEED = 32
 JUMP_POWER = 24
 
-TILE_SIZE = 35
+TILE_SIZE = 32
 HUD_HEIGHT = 60
 
 
@@ -328,7 +328,6 @@ class GameView(arcade.View):
         # Обновление эффектов
         for emitter in self.emitters:
             emitter.update()
-        # Удаляем завершённые эмиттеры
         self.emitters = [e for e in self.emitters if not e.can_reap()]
 
         self._update_camera()
@@ -452,3 +451,4 @@ class GameView(arcade.View):
                     return True
 
         return False
+
