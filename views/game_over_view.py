@@ -88,7 +88,7 @@ class Game_Over_View(arcade.Window):
         )
         self.manager.add(warning_box)
         if warning_box:
-            pass  # вернуться на шлавный экран
+            pass  # вернуться на главный экран
         else:
             pass  # остаемся
 
